@@ -17,6 +17,17 @@
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define CHARACTERISTIC2_UUID "29efd687-7f8c-4a6e-9e50-c61f42d6361d"
 
+#define ADC_CALIB_PIN_HIGH  35
+#define ADC_CALIB_PIN_LOW   34
+#define ADC_TEMP_PIN        32
+#define ADC_CALIB_VOLTS_HIGH  (3.0f)
+#define ADC_CALIB_VOLTS_LOW (0.3f)
+
+// Function Prototypes:
+float LM61_ADC_reading_to_temp(uint16_t analog_value);
+void ADC_get_calibration();
+
+static uint16_t adcHigh, adcLow;
 BLECharacteristic *pCharacteristic, *pCharacteristic2;
 
 void setup() {
@@ -24,6 +35,10 @@ void setup() {
   // Begin serial debug port
   Serial.begin(115200);
   Serial.println("Starting BLE work!");
+
+  // ADC calibrate
+  Serial.println("Calibrating ADC...");
+  ADC_get_calibration();
 
   // it seems that the device doesn't have to be instantiated here
   // Library is calling a static function
@@ -70,13 +85,42 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  static uint32_t i = 0;
-  static uint16_t analog_read;
-  delay(2000);
-  analog_read = analogRead(32);
-  Serial.print("Temp: ");
-  Serial.println(analog_read);
-  // Sets the value of CHARACTERISTIC2 to the value of integer i
-  pCharacteristic2->setValue(i);
+  uint32_t i = 0;
+  uint16_t temp_Q1;
+  
+  // read temperature in Q1 format
+  temp_Q1 = LM61_ADC_reading_to_temp(analogRead(ADC_TEMP_PIN)) * 10;
+  
+  // Sets the value of CHARACTERISTIC2 to the temperature reading
+  pCharacteristic2->setValue(temp_Q1);
   i++;
+
+  // delay for 2s
+  delay(2000);
+}
+
+/**
+ * @brief Converts the LM61 ADC readings to temperature
+ * @param [in] analog_value The analog value reading
+ */
+float LM61_ADC_reading_to_temp(uint16_t analog_value){
+  const float offset              = 0.6; // volts at 0 degs
+  const float temp_to_volts       = 0.01; // 10mV / ℃
+  float reading_volts;
+
+  // map according to calibration values (can't use map because we're dealing with floats)
+  reading_volts = (float)(analog_value - adcLow) * (ADC_CALIB_VOLTS_HIGH - ADC_CALIB_VOLTS_LOW) / (adcHigh - adcLow) + ADC_CALIB_VOLTS_LOW;
+  
+  return (reading_volts - offset) / temp_to_volts;
+
+}
+
+/**
+ * @brief Reads the absolute high (3V) and low (0.3V) values of the ADC pins
+ */
+void ADC_get_calibration(){
+
+  adcHigh = analogRead(ADC_CALIB_PIN_HIGH);
+  adcLow  = analogRead(ADC_CALIB_PIN_LOW);
+
 }
