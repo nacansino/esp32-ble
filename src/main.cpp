@@ -17,6 +17,8 @@
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define CHARACTERISTIC2_UUID "29efd687-7f8c-4a6e-9e50-c61f42d6361d"
 
+BLECharacteristic *pCharacteristic, *pCharacteristic2;
+
 void setup() {
 
   // Begin serial debug port
@@ -33,7 +35,7 @@ void setup() {
 
   // Create a characteristic with a UUID defined by CHARACTERISTIC_UUID
   // inside the service pService
-  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+  pCharacteristic = pService->createCharacteristic(
                                          CHARACTERISTIC_UUID,
                                          BLECharacteristic::PROPERTY_READ |
                                          BLECharacteristic::PROPERTY_WRITE
@@ -41,7 +43,7 @@ void setup() {
 
   // Create a characteristic with a UUID defined by CHARACTERISTIC2_UUID
   // inside the service pService
-  BLECharacteristic *pCharacteristic2 = pService->createCharacteristic(
+  pCharacteristic2 = pService->createCharacteristic(
                                          CHARACTERISTIC2_UUID,
                                          BLECharacteristic::PROPERTY_READ |
                                          BLECharacteristic::PROPERTY_WRITE
@@ -68,5 +70,13 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
+  static uint32_t i = 0;
+  static uint16_t analog_read;
   delay(2000);
+  analog_read = analogRead(32);
+  Serial.print("Temp: ");
+  Serial.println(analog_read);
+  // Sets the value of CHARACTERISTIC2 to the value of integer i
+  pCharacteristic2->setValue(i);
+  i++;
 }
