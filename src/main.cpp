@@ -30,15 +30,29 @@
 // Define the pins for our GPIOs
 #define SW_PIN  23
 #define LED_PIN 12
+#define STS_PIN 13
 
 // Function Prototypes:
 float LM61_ADC_reading_to_temp(uint16_t analog_value);
 void ADC_get_calibration();
 void onFallingSwPinISR(void);  // ISR
+void onTimeISR(void); // ISR
 
 // Global Variables
+enum e_ESP32_BLE_STS{
+  E_STS_SETUP = 0,
+  E_STS_STANDBY,
+  E_STS_CONNECTED,
+  E_STS_NUMBER_OF_STATUS
+};
+static e_ESP32_BLE_STS globalStatus;
+
 static uint16_t adcHigh, adcLow;
 BLECharacteristic *pCharADC, *pCharSW, *pCharLED, *pCharSTR;
+
+// Timer for status LED
+hw_timer_t * timer = NULL;
+portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Function callbacks
 class myAdcCallback : public BLECharacteristicCallbacks{
@@ -93,7 +107,28 @@ class mySTRCallback : public BLECharacteristicCallbacks{
   }
 };
 
+class peripheralCallback : public BLEServerCallbacks{
+  
+  void onConnect(BLEServer* pServer){
+    // On connect, display msg
+    globalStatus = E_STS_CONNECTED;
+
+    timerAlarmDisable(timer);
+    digitalWrite(STS_PIN, HIGH);
+
+  }
+
+  void onDisconnect(BLEServer* pServer){
+    // On Disconnect, display msg
+    globalStatus = E_STS_STANDBY;
+    timerAlarmEnable(timer);  
+  }
+
+};
+
 void setup() {
+  // Set global status
+  globalStatus = E_STS_SETUP;
 
   // Begin serial debug port
   Serial.begin(115200);
@@ -102,6 +137,15 @@ void setup() {
   // ADC calibrate
   Serial.println("Calibrating ADC...");
   ADC_get_calibration();
+
+  // Setup status LED timer
+  // Refer here: https://github.com/espressif/arduino-esp32/blob/master/libraries/ESP32/examples/Timer/RepeatTimer/RepeatTimer.ino
+  timer = timerBegin(0, 80, true); // 1 million ticks/sec @ 80MHz
+  // Fire Interrupt every 500k ticks, so 250ms
+  timerAttachInterrupt(timer, &onTimeISR, true);
+  timerAlarmWrite(timer, 250000, true);
+  timerAlarmEnable(timer);
+  pinMode(STS_PIN, OUTPUT);
 
   // set pin modes for SW and LED
   pinMode(SW_PIN, INPUT);
@@ -140,6 +184,8 @@ void setup() {
                                        ); // This is read/write
 
   // bind callbacks
+  pServer->setCallbacks(new peripheralCallback());
+
   pCharADC->setCallbacks(new myAdcCallback());
   pCharLED->setCallbacks(new myLEDCallback());
   pCharSTR->setCallbacks(new mySTRCallback());
@@ -162,6 +208,8 @@ void setup() {
   BLEDevice::startAdvertising();
 
   Serial.println("Characteristic defined! Now you can read it in your phone!");
+
+  globalStatus = E_STS_STANDBY;
 }
 
 void loop() {
@@ -202,4 +250,13 @@ void IRAM_ATTR onFallingSwPinISR(void){
   pCharSW->setValue("SW_HIGH");
   pCharSW->notify();
 
+}
+
+void IRAM_ATTR onTimeISR() {
+	portENTER_CRITICAL_ISR(&timerMux);
+  // Increment of shared variables per core must be done here!
+	portEXIT_CRITICAL_ISR(&timerMux);
+
+  // toggle status LED here
+  digitalWrite(STS_PIN, !digitalRead(STS_PIN));
 }
