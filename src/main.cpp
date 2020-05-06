@@ -146,6 +146,9 @@ void setup() {
 
   // Sets the initial value for STR
   pCharSTR->setValue("Hello World...");
+
+  // enable notification on SW
+  pCharSW->setNotifyProperty(true);
    
   // Start the service
   pService->start();
@@ -195,7 +198,8 @@ void ADC_get_calibration(){
  * @brief On falling edge of SwPinISR
  */
 void IRAM_ATTR onFallingSwPinISR(void){
-  // Send a notification to GATT client
-  Serial.println("pressed");
+  // Send a notification to GATT client with a value "SW_HIGH"
+  pCharSW->setValue("SW_HIGH");
+  pCharSW->notify();
 
 }
