@@ -14,8 +14,12 @@
 // https://www.uuidgenerator.net/
 
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define CHARACTERISTIC2_UUID "29efd687-7f8c-4a6e-9e50-c61f42d6361d"
+
+// DEFINE THE UUIDs for the custom characteristics
+#define CHAR_ADC_UUID  "229a8d41-fde4-44ff-8dad-feecdc379e92"
+#define CHAR_SW_UUID   "d8520577-81ed-478c-a3ad-a810d65c064a"
+#define CHAR_LED_UUID  "638cc58f-0c58-4f7a-ab38-0df7aff5e1f3"
+#define CHAR_STR_UUID  "be6b91f2-86ef-4426-807e-2a2e6e67e29d"
 
 #define ADC_CALIB_PIN_HIGH  35
 #define ADC_CALIB_PIN_LOW   34
@@ -23,12 +27,71 @@
 #define ADC_CALIB_VOLTS_HIGH  (3.0f)
 #define ADC_CALIB_VOLTS_LOW (0.3f)
 
+// Define the pins for our GPIOs
+#define SW_PIN  23
+#define LED_PIN 12
+
 // Function Prototypes:
 float LM61_ADC_reading_to_temp(uint16_t analog_value);
 void ADC_get_calibration();
+void onFallingSwPinISR(void);  // ISR
 
+// Global Variables
 static uint16_t adcHigh, adcLow;
-BLECharacteristic *pCharacteristic, *pCharacteristic2;
+BLECharacteristic *pCharADC, *pCharSW, *pCharLED, *pCharSTR;
+
+// Function callbacks
+class myAdcCallback : public BLECharacteristicCallbacks{
+  void onRead(BLECharacteristic* pCharacteristic){
+    // Only read when there is a request    
+    // read temperature in Q1 format
+    uint16_t temp_Q1 = LM61_ADC_reading_to_temp(analogRead(ADC_TEMP_PIN)) * 10;
+      
+    // Sets the value of CHARACTERISTIC2 to the temperature reading
+    pCharacteristic->setValue(temp_Q1);
+    
+  }  
+  void onWrite(BLECharacteristic* pCharacteristic){
+    // Nothing here, because this is read-only
+  }
+};
+
+class myLEDCallback : public BLECharacteristicCallbacks{
+  void onRead(BLECharacteristic* pCharacteristic){
+    // No need to do here
+  }  
+  void onWrite(BLECharacteristic* pCharacteristic){
+    // write the state to GPIO if there is write request
+    
+    // fetch value
+    std::string data = pCharacteristic->getValue();
+
+    // set the LED based on 1st character of fetched data   
+    if ( data == "SET"){
+      digitalWrite(LED_PIN, HIGH);
+    } else if ( data == "RESET") {
+      digitalWrite(LED_PIN, LOW);
+    } 
+    // do nothing if other values are received
+
+  }
+};
+
+class mySTRCallback : public BLECharacteristicCallbacks{
+  void onRead(BLECharacteristic* pCharacteristic){
+    // No need to do here
+  }  
+  void onWrite(BLECharacteristic* pCharacteristic){
+    // Send the string to serial port
+    
+    // fetch value
+    std::string data = pCharacteristic->getValue();
+
+    // print value
+    Serial.println(data.c_str());
+
+  }
+};
 
 void setup() {
 
@@ -40,39 +103,53 @@ void setup() {
   Serial.println("Calibrating ADC...");
   ADC_get_calibration();
 
+  // set pin modes for SW and LED
+  pinMode(SW_PIN, INPUT);
+  pinMode(LED_PIN, OUTPUT);
+
+  // attach interrupt for SW_PIN
+  attachInterrupt(SW_PIN, onFallingSwPinISR, FALLING);
+
   // it seems that the device doesn't have to be instantiated here
   // Library is calling a static function
-  BLEDevice::init("Long name works now");
+  BLEDevice::init("MyESP32BLE");
 
   // Create bluetooth server (advertiser)
   BLEServer *pServer = BLEDevice::createServer();
   BLEService *pService = pServer->createService(SERVICE_UUID);
 
-  // Create a characteristic with a UUID defined by CHARACTERISTIC_UUID
+  // Creates the three characteristics: ADC, SW, LED, STR
   // inside the service pService
-  pCharacteristic = pService->createCharacteristic(
-                                         CHARACTERISTIC_UUID,
+  pCharADC = pService->createCharacteristic(
+                                         CHAR_ADC_UUID,
+                                         BLECharacteristic::PROPERTY_READ
+                                       ); // This will be read-only
+  pCharSW = pService->createCharacteristic(
+                                         CHAR_SW_UUID,
+                                         BLECharacteristic::PROPERTY_READ
+                                       ); // This will be read-only
+  pCharLED = pService->createCharacteristic(
+                                         CHAR_LED_UUID,
                                          BLECharacteristic::PROPERTY_READ |
                                          BLECharacteristic::PROPERTY_WRITE
-                                       );
-
-  // Create a characteristic with a UUID defined by CHARACTERISTIC2_UUID
-  // inside the service pService
-  pCharacteristic2 = pService->createCharacteristic(
-                                         CHARACTERISTIC2_UUID,
+                                       ); // This is read/write
+  pCharSTR = pService->createCharacteristic(
+                                         CHAR_STR_UUID,
                                          BLECharacteristic::PROPERTY_READ |
                                          BLECharacteristic::PROPERTY_WRITE
-                                       );
+                                       ); // This is read/write
 
-  // Sets the value for CHARACTERISTIC
-  pCharacteristic->setValue("Hello World says Neil");
-  
-  // Sets the value and descriptor for CHARACTERISTIC2
-  pCharacteristic2->setValue("This is Niel... hehehe");
-  pCharacteristic2->setNotifyProperty(true);
- 
+  // bind callbacks
+  pCharADC->setCallbacks(new myAdcCallback());
+  pCharLED->setCallbacks(new myLEDCallback());
+  pCharSTR->setCallbacks(new mySTRCallback());
+
+  // Sets the initial value for STR
+  pCharSTR->setValue("Hello World...");
+   
   // Start the service
   pService->start();
+  
   // BLEAdvertising *pAdvertising = pServer->getAdvertising();  // this still is working for backward compatibility
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
@@ -80,23 +157,12 @@ void setup() {
   pAdvertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
+
   Serial.println("Characteristic defined! Now you can read it in your phone!");
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  uint32_t i = 0;
-  uint16_t temp_Q1;
-  
-  // read temperature in Q1 format
-  temp_Q1 = LM61_ADC_reading_to_temp(analogRead(ADC_TEMP_PIN)) * 10;
-  
-  // Sets the value of CHARACTERISTIC2 to the temperature reading
-  pCharacteristic2->setValue(temp_Q1);
-  i++;
-
-  // delay for 2s
-  delay(2000);
+  // do nothing here
 }
 
 /**
@@ -122,5 +188,14 @@ void ADC_get_calibration(){
 
   adcHigh = analogRead(ADC_CALIB_PIN_HIGH);
   adcLow  = analogRead(ADC_CALIB_PIN_LOW);
+
+}
+
+/**
+ * @brief On falling edge of SwPinISR
+ */
+void IRAM_ATTR onFallingSwPinISR(void){
+  // Send a notification to GATT client
+  Serial.println("pressed");
 
 }
